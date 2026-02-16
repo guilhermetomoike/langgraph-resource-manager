@@ -95,6 +95,87 @@ const Orchestration = () => {
         executionsToday: 24,
     });
 
+    // Workflow execution state
+    const [isExecuting, setIsExecuting] = useState(false);
+    const [executionId, setExecutionId] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [toast, setToast] = useState<{
+        show: boolean;
+        message: string;
+        type: 'success' | 'error' | 'info';
+    }>({
+        show: false,
+        message: '',
+        type: 'info',
+    });
+
+    // Helper function to show toast
+    const showToast = (message: string, type: 'success' | 'error' | 'info') => {
+        setToast({ show: true, message, type });
+        setTimeout(() => {
+            setToast({ show: false, message: '', type: 'info' });
+        }, 5000);
+    };
+
+    // Handle workflow start
+    const handleStartWorkflow = async () => {
+        try {
+            setIsExecuting(true);
+            setError(null);
+
+            // Generate execution ID
+            const newExecutionId = crypto.randomUUID();
+            setExecutionId(newExecutionId);
+
+            // Show info toast
+            showToast('Iniciando sincronização com MS Project...', 'info');
+
+            // Update agent status to show activity
+            setAgents(prev => prev.map(agent =>
+                agent.id === 1 ? { ...agent, status: 'running' as const } : agent
+            ));
+
+            // Trigger n8n workflow
+            const { apiService } = await import('../services/api');
+            const response = await apiService.triggerN8nWorkflow({
+                project_ids: ['proj-1', 'proj-2'], // TODO: Get from user selection
+                start_date: new Date().toISOString().split('T')[0],
+                end_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                execution_id: newExecutionId,
+            });
+
+            // Success
+            showToast('Workflow iniciado com sucesso!', 'success');
+
+            // Update metrics
+            setSystemMetrics(prev => ({
+                ...prev,
+                activeExecutions: prev.activeExecutions + 1,
+                executionsToday: prev.executionsToday + 1,
+            }));
+
+            // Update agents to show progress
+            setAgents(prev => prev.map(agent => {
+                if (agent.id === 1) return { ...agent, status: 'success' as const };
+                if (agent.id === 2) return { ...agent, status: 'running' as const };
+                return agent;
+            }));
+
+        } catch (err: any) {
+            console.error('Error starting workflow:', err);
+            const errorMessage = err.message || 'Erro ao iniciar workflow. Tente novamente.';
+            setError(errorMessage);
+            showToast(errorMessage, 'error');
+
+            // Reset agent status
+            setAgents(prev => prev.map(agent =>
+                agent.id === 1 ? { ...agent, status: 'error' as const } : agent
+            ));
+        } finally {
+            setIsExecuting(false);
+        }
+    };
+
     const getStatusColor = (status: Agent['status']) => {
         switch (status) {
             case 'running':
@@ -147,9 +228,22 @@ const Orchestration = () => {
 
                 {/* Control Buttons */}
                 <div className="flex gap-3">
-                    <button className="btn-primary flex items-center gap-2">
-                        <Play size={20} />
-                        Iniciar
+                    <button
+                        className="btn-primary flex items-center gap-2"
+                        onClick={handleStartWorkflow}
+                        disabled={isExecuting}
+                    >
+                        {isExecuting ? (
+                            <>
+                                <RefreshCw size={20} className="animate-spin" />
+                                Processando...
+                            </>
+                        ) : (
+                            <>
+                                <Play size={20} />
+                                Iniciar
+                            </>
+                        )}
                     </button>
                     <button className="btn-secondary flex items-center gap-2">
                         <Pause size={20} />
@@ -338,6 +432,23 @@ const Orchestration = () => {
                     ))}
                 </div>
             </div>
+
+            {/* Toast Notification */}
+            {toast.show && (
+                <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+                    <div className={`
+                        glass p-4 rounded-lg shadow-2xl border-l-4 flex items-center gap-3 min-w-[300px]
+                        ${toast.type === 'success' ? 'border-green-500' : ''}
+                        ${toast.type === 'error' ? 'border-red-500' : ''}
+                        ${toast.type === 'info' ? 'border-blue-500' : ''}
+                    `}>
+                        {toast.type === 'success' && <CheckCircle2 className="text-green-500" size={24} />}
+                        {toast.type === 'error' && <AlertCircle className="text-red-500" size={24} />}
+                        {toast.type === 'info' && <Activity className="text-blue-500" size={24} />}
+                        <p className="flex-1">{toast.message}</p>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

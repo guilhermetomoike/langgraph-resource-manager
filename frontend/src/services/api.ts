@@ -1,12 +1,14 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const N8N_WEBHOOK_URL = import.meta.env.VITE_N8N_WEBHOOK_URL || '';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
     headers: {
         'Content-Type': 'application/json',
     },
+    timeout: 30000, // 30 seconds timeout
 });
 
 // Interfaces
@@ -68,6 +70,20 @@ export interface SimulationResponse {
     };
 }
 
+export interface N8nWorkflowRequest {
+    project_ids: string[];
+    start_date: string;
+    end_date: string;
+    execution_id: string;
+}
+
+export interface N8nWorkflowResponse {
+    success: boolean;
+    execution_id: string;
+    message: string;
+    stage?: string;
+}
+
 // API Methods
 export const apiService = {
     // Health check
@@ -98,6 +114,32 @@ export const apiService = {
     simulateScenario: async (data: SimulationRequest): Promise<SimulationResponse> => {
         const response = await api.post<SimulationResponse>('/simulate', data);
         return response.data;
+    },
+
+    // Trigger n8n workflow (MS Project sync + LangGraph execution)
+    triggerN8nWorkflow: async (data: N8nWorkflowRequest): Promise<N8nWorkflowResponse> => {
+        if (!N8N_WEBHOOK_URL) {
+            throw new Error('n8n webhook URL not configured. Please set VITE_N8N_WEBHOOK_URL in .env file.');
+        }
+
+        try {
+            const response = await axios.post<N8nWorkflowResponse>(
+                N8N_WEBHOOK_URL,
+                data,
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    timeout: 60000, // 60 seconds for n8n workflow
+                }
+            );
+            return response.data;
+        } catch (error: any) {
+            if (error.code === 'ECONNABORTED') {
+                throw new Error('Workflow execution timeout. Please try again.');
+            }
+            throw new Error(error.response?.data?.message || 'Failed to trigger n8n workflow');
+        }
     },
 };
 
